@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>web-site</title>
+
+    <!-- Tailwind -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+
+    <!-- Lucide icons -->
+    <script type="module">
+        import { createIcons, Search, ShoppingCart, User, PlusCircle, LayoutDashboard, X, ChevronDown } from 'https://unpkg.com/lucide@latest/dist/esm/lucide.js';
+        window.createIcons = createIcons;
+        window.LucideIcons = { Search, ShoppingCart, User, PlusCircle, LayoutDashboard, X, ChevronDown };
+        createIcons({ icons: { Search, ShoppingCart, User, PlusCircle, LayoutDashboard, X, ChevronDown } });
+    </script>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+
+        .product-card {
+            transition: transform .28s ease, box-shadow .28s ease;
+        }
+
+        .product-card:hover {
+            transform: translateY(-6px);
+            box-shadow: 0 12px 30px rgba(0, 0, 0, .08);
+        }
+
+        .animate-shake {
+            animation: shake .5s cubic-bezier(.36, .07, .19, .97) both;
+            transform: translate3d(0, 0, 0);
+            backface-visibility: hidden;
+            perspective: 1000px;
+        }
+
+        @keyframes shake {
+
+            10%,
+            90% {
+                transform: translate3d(-1px, 0, 0);
+            }
+
+            20%,
+            80% {
+                transform: translate3d(2px, 0, 0);
+            }
+
+            30%,
+            50%,
+            70% {
+                transform: translate3d(-4px, 0, 0);
+            }
+
+            40%,
+            60% {
+                transform: translate3d(4px, 0, 0);
+            }
+        }
+
+        .product-grid-container {
+            max-height: calc(100vh - 180px);
+            overflow-y: auto;
+            padding-right: 6px;
+        }
+
+        #content {
+            padding-top: 10px;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-50">
+    <div id="app" class="min-h-screen flex flex-col">
+        <header id="header" class="sticky top-0 z-20 shadow-sm bg-white"></header>
+        <main id="content" class="flex-grow p-4 sm:p-8"></main>
+        <footer id="footer"></footer>
+        <div id="modal-container" class="fixed inset-0 z-50 flex items-start justify-center pointer-events-none"></div>
+    </div>
+
+    <script type="module">
+        // ---------- GLOBAL STATE ----------
+        const State = {
+            currentView: 'HOME', // HOME, CART, ADMIN, CONTACT, LOGIN
+            products: [],
+            cart: {},
+            userId: null,
+            userDisplayName: null,
+            isAuthReady: false,
+            db: null,
+            auth: null,
+            appId: typeof __app_id !== 'undefined' ? __app_id : 'default-app-id',
+            useLocal: true
+        };
+
+        // Developer-provided uploaded image path (will be transformed to URL by environment during tool call).
+        const uploadedImagePath = '/mnt/data/614740be-13c6-47f6-9ea1-631d8ac4fcea.png';
+
+        // Local sample products (stable IDs)
+        const initialProducts = [
+            { id: 'p-001', name: "Disposable Lighter", price: 10.00, imageUrl: "https://placehold.co/400x300/FACC15/000?text=lighter", category: "Paan Corner" },
+            { id: 'p-002', name: "Fresh Milk (1L)", price: 65.00, imageUrl: "https://placehold.co/400x300/FACC15/000?text=milk", category: "Dairy, Bread & Eggs" },
+            { id: 'p-003', name: "Whole Wheat Bread", price: 50.00, imageUrl: "https://placehold.co/400x300/FACC15/000?text=bread", category: "Dairy, Bread & Eggs" },
+            { id: 'p-004', name: "Bananas (1kg)", price: 45.50, imageUrl: "https://placehold.co/400x300/FACC15/000?text=bananas", category: "Fruits & Vegetables" },
+            { id: 'p-005', name: "Coca Cola (2L)", price: 90.00, imageUrl: "https://placehold.co/400x300/FACC15/000?text=cola", category: "Cold Drinks & Juices" },
+            // Use the uploaded file path for one item so you see your actual uploaded image:
+            { id: 'p-006', name: "Doritos Nacho Cheese", price: 30.00, imageUrl: uploadedImagePath, category: "Snacks & Munchies" },
+            { id: 'p-007', name: "Oats Pouch (500g)", price: 150.00, imageUrl: "https://placehold.co/400x300/FACC15/000?text=oats", category: "Breakfast & Instant Food" },
+            { id: 'p-008', name: "Cadbury Dairy Milk (Large)", price: 100.00, imageUrl: "https://placehold.co/400x300/FACC15/000?text=choc", category: "Sweet Tooth" },
+            { id: 'p-009', name: "Oreo Cream Biscuits", price: 40.00, imageUrl: "https://placehold.co/400x300/FACC15/000?text=oreo", category: "Bakery & Biscuits" },
+            { id: 'p-010', name: "Nescafe Instant Coffee (50g)", price: 199.00, imageUrl: "https://placehold.co/400x300/FACC15/000?text=coffee", category: "Tea, Coffee & Milk Drinks" }
+        ];
+
+        // Safe no-op unsubscribers (prevent ReferenceErrors)
+        let unsubscribeProducts = () => { };
+        let unsubscribeCart = () => { };
+
+        // ---------- UI Utilities ----------
+        function showModal(message, type = 'info') {
+            const modalContainer = document.getElementById('modal-container');
+            let bg = 'bg-yellow-100 border-yellow-500 text-yellow-800';
+            if (type === 'success') bg = 'bg-green-100 border-green-500 text-green-800';
+            if (type === 'error') bg = 'bg-red-100 border-red-500 text-red-800';
+
+            const modal = document.createElement('div');
+            modal.className = `p-4 m-4 rounded-lg shadow-xl border-l-4 ${bg} transition-all duration-300 transform pointer-events-auto`;
+            modal.style.minWidth = '260px';
+            modal.textContent = message;
+            modalContainer.appendChild(modal);
+            setTimeout(() => modal.remove(), 3000);
+        }
+
+        // ---------- Auth (local) ----------
+        // Persist user in localStorage as 'kmart_user' : { id, displayName }
+        function loadPersistedUser() {
+            try {
+                const raw = localStorage.getItem('kmart_user');
+                if (!raw) return null;
+                return JSON.parse(raw);
+            } catch (e) { return null; }
+        }
+        function persistUser(user) {
+            if (!user) { localStorage.removeItem('kmart_user'); return; }
+            localStorage.setItem('kmart_user', JSON.stringify(user));
+        }
+
+        window.loginUser = function (event) {
+            event && event.preventDefault();
+            const form = event ? event.target : document.getElementById('login-form');
+            const username = form.username.value?.trim();
+            const password = form.password.value ?? '';
+
+            if (!username) { showModal('Enter username', 'error'); return; }
+            // simple local rules:
+            // admin credentials = username: admin, password: adminpass
+            if (username === 'admin' && password === 'adminpass') {
+                State.userId = 'admin';
+                State.userDisplayName = 'Admin';
+                persistUser({ id: State.userId, displayName: State.userDisplayName });
+                showModal('Signed in as admin', 'success');
+                State.currentView = 'ADMIN';
+                renderApp();
+                return;
+            }
+            // For other users, accept any password (demo). Use username as id.
+            State.userId = username;
+            State.userDisplayName = username.charAt(0).toUpperCase() + username.slice(1);
+            persistUser({ id: State.userId, displayName: State.userDisplayName });
+            showModal(`Welcome, ${State.userDisplayName}`, 'success');
+            State.currentView = 'HOME';
+            renderApp();
+        };
+
+        window.logoutUser = function () {
+            State.userId = null;
+            State.userDisplayName = null;
+            persistUser(null);
+            showModal('Logged out', 'info');
+            State.currentView = 'HOME';
+            renderApp();
+        };
+
+        // On load, restore user if present
+        const persisted = loadPersistedUser();
+        if (persisted) {
+            State.userId = persisted.id;
+            State.userDisplayName = persisted.displayName;
+        }
+
+        // ---------- Cart operations ----------
+        window.addToCart = function (productId) {
+            const product = State.products.find(p => p.id === productId);
+            if (!product) return;
+            const existing = State.cart[productId];
+            const newCart = { ...State.cart };
+            if (existing) newCart[productId].quantity += 1;
+            else newCart[productId] = { item: product, quantity: 1 };
+            State.cart = newCart;
+            showModal(`${product.name} added to cart!`, 'success');
+            const el = document.getElementById('cart-count');
+            if (el) { el.classList.add('animate-shake'); setTimeout(() => el.classList.remove('animate-shake'), 500); }
+            renderApp();
+        };
+
+        window.updateCartQuantity = function (productId, delta) {
+            const entry = State.cart[productId];
+            if (!entry) return;
+            const newCart = { ...State.cart };
+            newCart[productId].quantity = entry.quantity + delta;
+            if (newCart[productId].quantity <= 0) {
+                delete newCart[productId];
+                showModal(`${entry.item.name} removed from cart.`, 'info');
+            }
+            State.cart = newCart;
+            renderApp();
+        };
+
+        window.checkout = function () {
+            if (Object.keys(State.cart).length === 0) { showModal('Your cart is empty!', 'info'); return; }
+            showModal('Order placed successfully! (Cart cleared)', 'success');
+            State.cart = {};
+            State.currentView = 'HOME';
+            renderApp();
+        };
+
+        // ---------- Renderers ----------
+        function renderHeader() {
+            const totalItems = Object.values(State.cart).reduce((sum, it) => sum + (it.quantity || 0), 0);
+            const userButtonHtml = State.userId ? `
+            <div class="flex items-center space-x-3">
+                <span class="text-sm font-medium text-gray-700 hidden sm:inline">Hi, ${State.userDisplayName}</span>
+                <button onclick="logoutUser()" class="text-sm px-3 py-2 rounded-md bg-gray-100 hover:bg-gray-200">Logout</button>
+            </div>
+        ` : `<button onclick="setView('LOGIN')" class="text-base font-semibold text-gray-700 hover:text-gray-900 transition-colors hidden sm:block">Login</button>`;
+
+            const isAdmin = State.userId === 'admin';
+
+            const headerHtml = `
+            <div class="max-w-8xl mx-auto px-4 sm:px-6 lg:px-8 py-4 flex items-center justify-between space-x-4 relative h-20">
+                <div class="flex items-center space-x-4">
+                    <div class="flex-shrink-0 cursor-pointer" onclick="setView('HOME')">
+                        <span class="text-3xl font-extrabold tracking-tighter" style="color: #4CAF50;">K<span style="color: #FFC107;">-Mart</span></span>
+                    </div>
+                    <div class="hidden md:flex flex-shrink-0 items-center space-x-2 text-sm border-r border-gray-200 pr-6">
+                        <div class="text-left cursor-pointer hover:bg-gray-50 p-2 rounded-lg transition-colors">
+                            <p class="font-bold text-gray-800 whitespace-nowrap">Delivery in 9 minutes</p>
+                            <p class="text-xs text-gray-500 whitespace-nowrap">7RR2+CR5, Dhebar Rd, Raghuv... <i data-lucide="chevron-down" class="w-4 h-4 inline-block align-middle"></i></p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="flex-grow max-w-lg mx-4">
+                    <div class="relative">
+                        <i data-lucide="search" class="w-5 h-5 text-gray-500 absolute left-4 top-1/2 transform -translate-y-1/2"></i>
+                        <input id="global-search" type="text" placeholder="Search 'chips' or 'milk'"
+                            class="w-full bg-gray-100/80 border border-gray-200 rounded-lg py-3 pl-12 pr-4 text-gray-800 placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-green-400 transition" />
+                    </div>
+                </div>
+
+                <div class="flex-shrink-0 flex items-center space-x-4">
+                    ${userButtonHtml}
+                    <button onclick="setView('CART')" class="flex items-center space-x-2 bg-gray-200 hover:bg-gray-300 transition-colors py-3 px-5 rounded-lg font-bold text-gray-900 relative shadow-sm">
+                        <i data-lucide="shopping-cart" class="w-5 h-5"></i>
+                        <span id="cart-count" class="absolute top-[-8px] right-[-8px] transform text-xs font-bold bg-green-500 text-white rounded-full h-5 w-5 flex items-center justify-center">${totalItems}</span>
+                        <span>My Cart</span>
+                    </button>
+                    ${isAdmin ? `<button onclick="setView('ADMIN')" class="p-2 rounded-full text-green-600 hover:bg-gray-100 transition-colors relative group hidden md:block" title="Admin Panel"><i data-lucide="layout-dashboard" class="w-6 h-6"></i></button>` : ''}
+                </div>
+            </div>
+        `;
+            document.getElementById('header').innerHTML = headerHtml;
+            if (window.createIcons) window.createIcons({ icons: window.LucideIcons });
+        }
+
+        function renderHomePage() {
+            let productCards = State.products.map(product => `
+            <div class="product-card bg-white p-4 rounded-xl shadow-lg flex flex-col justify-between">
+                <img src="${product.imageUrl}" alt="${product.name}" class="w-full h-36 object-cover rounded-lg mb-4"
+                    onerror="this.onerror=null; this.src='https://placehold.co/400x300/FACC15/000?text=${encodeURIComponent(product.name)}';" />
+                <div>
+                    <span class="text-xs font-semibold text-yellow-600 uppercase">${product.category}</span>
+                    <h3 class="text-lg font-bold text-gray-900 mt-1 mb-2 truncate">${product.name}</h3>
+                    <p class="text-2xl font-extrabold text-gray-800 mb-4">₹${product.price.toFixed(2)}</p>
+                </div>
+                <button onclick="addToCart('${product.id}')" class="w-full bg-green-500 text-white py-2 rounded-lg font-semibold flex items-center justify-center space-x-2 hover:bg-green-600 transition duration-150 transform hover:scale-[1.02]">
+                    <i data-lucide="plus-circle" class="w-5 h-5"></i>
+                    <span>Add to Cart</span>
+                </button>
+            </div>
+        `).join('');
+
+            if (!State.products || State.products.length === 0) {
+                productCards = `<div class="col-span-full text-center py-12"><p class="text-xl text-gray-500">No products available yet.</p></div>`;
+            }
+
+            const homeHtml = `
+            <h2 class="text-4xl font-extrabold text-gray-900 mb-6 sm:mb-8 text-center sm:text-left">Fresh Deals, Delivered Fast</h2>
+            <div class="product-grid-container px-2 pb-8">
+                <div class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4 sm:gap-6">
+                    ${productCards}
+                </div>
+            </div>
+        `;
+            document.getElementById('content').innerHTML = homeHtml;
+            if (window.createIcons) window.createIcons({ icons: { PlusCircle: window.LucideIcons.PlusCircle } });
+        }
+
+        function renderCartPage() {
+            const cartItems = Object.values(State.cart);
+            const subtotal = cartItems.reduce((s, it) => s + it.item.price * it.quantity, 0);
+            const deliveryFee = subtotal > 0 ? 40 : 0;
+            const total = subtotal + deliveryFee;
+
+            const cartListHtml = cartItems.length > 0 ? cartItems.map(item => `
+            <li class="flex justify-between items-center py-4 border-b border-gray-200">
+                <div class="flex items-center space-x-4">
+                    <img src="${item.item.imageUrl}" alt="${item.item.name}" class="w-16 h-16 object-cover rounded-lg"
+                        onerror="this.onerror=null; this.src='https://placehold.co/100x100/FACC15/000?text=Item';" />
+                    <div>
+                        <p class="font-semibold text-gray-900">${item.item.name}</p>
+                        <p class="text-sm text-gray-500">₹${item.item.price.toFixed(2)} / unit</p>
+                    </div>
+                </div>
+                <div class="flex items-center space-x-4">
+                    <div class="flex items-center border border-gray-300 rounded-lg overflow-hidden">
+                        <button onclick="updateCartQuantity('${item.item.id}', -1)" class="p-2 w-8 h-8 flex items-center justify-center text-red-600 hover:bg-red-50 transition-colors">-</button>
+                        <span class="px-3 font-medium text-gray-800">${item.quantity}</span>
+                        <button onclick="updateCartQuantity('${item.item.id}', 1)" class="p-2 w-8 h-8 flex items-center justify-center text-green-600 hover:bg-green-50 transition-colors">+</button>
+                    </div>
+                    <p class="font-bold text-gray-900 min-w-[70px] text-right">₹${(item.item.price * item.quantity).toFixed(2)}</p>
+                </div>
+            </li>
+        `).join('') : `
+            <div class="py-12 text-center">
+                <i data-lucide="shopping-cart" class="w-16 h-16 text-gray-400 mx-auto mb-4"></i>
+                <p class="text-xl text-gray-500">Your cart is empty!</p>
+                <button onclick="setView('HOME')" class="mt-4 text-yellow-600 font-medium hover:underline">Start Shopping</button>
+            </div>
+        `;
+
+            const cartHtml = `
+            <div class="max-w-4xl mx-auto">
+                <h2 class="text-4xl font-extrabold text-gray-900 mb-8 text-center">Your Shopping Cart</h2>
+                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                    <div class="lg:col-span-2 bg-white p-6 rounded-xl shadow-lg">
+                        <ul class="divide-y divide-gray-100">${cartListHtml}</ul>
+                    </div>
+                    <div class="lg:col-span-1">
+                        <div class="bg-gray-100 p-6 rounded-xl shadow-lg sticky top-24">
+                            <h3 class="text-xl font-bold text-gray-900 mb-4">Order Summary</h3>
+                            <div class="space-y-2 text-gray-700">
+                                <div class="flex justify-between"><span>Subtotal (${cartItems.length} items)</span><span class="font-medium">₹${subtotal.toFixed(2)}</span></div>
+                                <div class="flex justify-between"><span>Delivery Fee</span><span class="font-medium">₹${deliveryFee.toFixed(2)}</span></div>
+                                <div class="flex justify-between pt-4 border-t border-gray-300 mt-4 text-xl font-extrabold text-gray-900"><span>Total</span><span>₹${total.toFixed(2)}</span></div>
+                            </div>
+                            <button onclick="checkout()" ${cartItems.length === 0 ? 'disabled' : ''} class="mt-6 w-full bg-yellow-500 text-gray-900 py-3 rounded-lg font-bold text-lg hover:bg-yellow-600 transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed transform hover:scale-[1.01] shadow-md">
+                                Proceed to Checkout
+                            </button>
+                            <p class="text-xs text-gray-500 mt-3 text-center">Your order will be delivered in 10-15 minutes!</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        `;
+            document.getElementById('content').innerHTML = cartHtml;
+            if (window.createIcons) window.createIcons({ icons: { ShoppingCart: window.LucideIcons.ShoppingCart } });
+        }
+
+        function renderAdminPage() {
+            if (State.userId !== 'admin') {
+                document.getElementById('content').innerHTML = `
+                <div class="max-w-md mx-auto text-center py-20 bg-red-50 p-6 rounded-xl shadow-lg">
+                    <i data-lucide="x" class="w-12 h-12 text-red-600 mx-auto mb-4"></i>
+                    <h2 class="text-3xl font-bold text-red-800 mb-2">Access Denied</h2>
+                    <p class="text-gray-600">You must be logged in as the 'admin' user to access this panel.</p>
+                </div>`;
+                if (window.createIcons) window.createIcons({ icons: { X: window.LucideIcons.X } });
+                return;
+            }
+
+            // Simple add-product UI that adds to local products (demo). In a real app connect to Firestore.
+            const categories = [
+                "Paan Corner", "Dairy, Bread & Eggs", "Fruits & Vegetables",
+                "Cold Drinks & Juices", "Snacks & Munchies", "Breakfast & Instant Food",
+                "Sweet Tooth", "Bakery & Biscuits", "Tea, Coffee & Milk Drinks",
+                "Atta, Rice & Dal", "Masala, Oil & More", "Sauces & Spreads",
+                "Chicken, Meat & Fish", "Organic & Healthy Living", "Baby Care",
+                "Pharma & Wellness", "Cleaning Essentials", "Home & Office",
+                "Personal Care", "Pet Care"
+            ];
+            const categoryOptions = categories.map(c => `<option value="${c}">${c}</option>`).join('');
+
+            const adminHtml = `
+            <div class="max-w-xl mx-auto bg-white p-8 rounded-xl shadow-2xl">
+                <h2 class="text-4xl font-extrabold text-gray-900 mb-8 text-center">Admin Panel: Add Product (Local Demo)</h2>
+                <form id="admin-add-form" class="space-y-6">
+                    <div><label class="block text-sm font-medium text-gray-700">Product Name</label><input name="name" required class="mt-1 block w-full border border-gray-300 rounded-md p-3"></div>
+                    <div><label class="block text-sm font-medium text-gray-700">Price (₹)</label><input name="price" type="number" required step="0.01" min="0.01" class="mt-1 block w-full border border-gray-300 rounded-md p-3"></div>
+                    <div><label class="block text-sm font-medium text-gray-700">Image URL</label><input name="imageUrl" placeholder="https://..." required class="mt-1 block w-full border border-gray-300 rounded-md p-3"></div>
+                    <div><label class="block text-sm font-medium text-gray-700">Category</label><select name="category" required class="mt-1 block w-full border border-gray-300 rounded-md p-3 bg-white">${categoryOptions}</select></div>
+                    <div><button type="submit" class="w-full bg-yellow-500 text-gray-900 py-3 rounded-lg font-bold text-lg">Add Product</button></div>
+                </form>
+            </div>
+        `;
+            document.getElementById('content').innerHTML = adminHtml;
+            document.getElementById('admin-add-form').addEventListener('submit', (e) => {
+                e.preventDefault();
+                const f = e.target;
+                const name = f.name.value.trim();
+                const price = parseFloat(f.price.value);
+                const imageUrl = f.imageUrl.value.trim();
+                const category = f.category.value;
+                if (!name || isNaN(price) || !imageUrl || !category) { showModal('Fill fields correctly', 'error'); return; }
+                const newId = 'p-' + String(Date.now()).slice(-6);
+                State.products.unshift({ id: newId, name, price, imageUrl, category });
+                showModal(`${name} added (local demo)`, 'success');
+                setView('HOME');
+            });
+            if (window.createIcons) window.createIcons({ icons: { PlusCircle: window.LucideIcons.PlusCircle } });
+        }
+
+        function renderLoginPage() {
+            const loginHtml = `
+            <div class="max-w-md mx-auto bg-white p-8 rounded-xl shadow-2xl">
+                <h2 class="text-3xl font-bold text-gray-900 mb-4 text-center">Sign In</h2>
+                <p class="text-sm text-gray-600 mb-6 text-center">Demo login: admin/adminpass to access admin panel. Other usernames accepted.</p>
+                <form id="login-form" class="space-y-4">
+                    <div><label class="block text-sm font-medium text-gray-700">Username</label><input name="username" required class="mt-1 block w-full border border-gray-300 rounded-md p-3" placeholder="e.g. kishlay"></div>
+                    <div><label class="block text-sm font-medium text-gray-700">Password</label><input name="password" type="password" required class="mt-1 block w-full border border-gray-300 rounded-md p-3" placeholder="password"></div>
+                    <div class="flex items-center justify-between">
+                        <button type="submit" class="w-full bg-green-500 text-white py-3 rounded-lg font-semibold">Sign In</button>
+                    </div>
+                </form>
+                <p class="text-xs text-gray-500 mt-4 text-center">This is a local demo auth — no passwords are sent anywhere.</p>
+            </div>
+        `;
+            document.getElementById('content').innerHTML = loginHtml;
+            const form = document.getElementById('login-form');
+            form.addEventListener('submit', loginUser);
+        }
+
+        function renderFooter() {
+            const footerHtml = `
+            <footer class="bg-gray-900 text-gray-300 mt-12 pt-8 pb-4">
+                <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+                    <div class="grid grid-cols-2 md:grid-cols-5 gap-8 border-b border-gray-800 pb-8 mb-6">
+                        <div><h4 class="text-lg font-bold text-white mb-4">Useful Links</h4><ul class="space-y-2 text-sm"><li><a href="#" class="hover:text-yellow-400">Blog</a></li><li><a href="#" class="hover:text-yellow-400">Privacy</a></li></ul></div>
+                        <div><h4 class="text-lg font-bold text-white mb-4">Partner</h4><ul class="space-y-2 text-sm"><li><a href="#" class="hover:text-yellow-400">Partner</a></li></ul></div>
+                        <div class="col-span-2 md:col-span-3"><h4 class="text-lg font-bold text-white mb-4 flex justify-between items-center"><span>Categories</span><a href="#" class="text-sm font-semibold text-yellow-400">See All</a></h4><div class="grid grid-cols-2 sm:grid-cols-3 gap-y-2 text-sm"><a class="hover:text-yellow-400">Paan Corner</a><a class="hover:text-yellow-400">Dairy, Bread & Eggs</a><a class="hover:text-yellow-400">Fruits & Vegetables</a></div></div>
+                    </div>
+                    <div class="flex flex-col sm:flex-row justify-between items-center space-y-4 sm:space-y-0 text-sm py-4 border-b border-gray-800 mb-4">
+                        <div class="flex items-center space-x-4"><span>Download App:</span><img src="https://placehold.co/120x35/000/fff?text=App+Store" class="h-8 rounded-lg"><img src="https://placehold.co/120x35/000/fff?text=Google+Play" class="h-8 rounded-lg"></div>
+                        <div class="flex space-x-4"><a class="text-2xl hover:text-yellow-400 font-bold">f</a><a class="text-2xl hover:text-yellow-400 font-bold">t</a><a class="text-2xl hover:text-yellow-400 font-bold">i</a></div>
+                    </div>
+                    <p class="text-xs text-center text-gray-500 pt-2">&copy; 2024 K-Mart Commerce Private Limited. All rights reserved.</p>
+                </div>
+            </footer>
+        `;
+            document.getElementById('footer').innerHTML = footerHtml;
+        }
+
+        // Central render function
+        function renderApp() {
+            renderHeader();
+            if (!State.isAuthReady) {
+                document.getElementById('content').innerHTML = `<div class="text-center py-20"><div class="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto mb-4"></div><p class="text-lg text-gray-600">Loading application...</p></div>`;
+                renderFooter();
+                return;
+            }
+
+            switch (State.currentView) {
+                case 'HOME': renderHomePage(); break;
+                case 'CART': renderCartPage(); break;
+                case 'ADMIN': renderAdminPage(); break;
+                case 'LOGIN': renderLoginPage(); break;
+                default: renderHomePage();
+            }
+            if (window.createIcons) window.createIcons({ icons: window.LucideIcons });
+            renderFooter();
+        }
+
+        window.setView = function (view) { State.currentView = view; renderApp(); };
+
+
+        async function initApp() {
+
+            try {
+                State.products = initialProducts.slice();
+                State.isAuthReady = true;
+
+                if (State.userId && !State.userDisplayName) {
+                    State.userDisplayName = (State.userId === 'admin') ? 'Admin' : (State.userId.charAt(0).toUpperCase() + State.userId.slice(1));
+                }
+                renderApp();
+            } catch (err) {
+                console.error('Init error', err);
+                State.products = initialProducts.slice();
+                State.isAuthReady = true;
+                renderApp();
+            }
+        }
+
+        initApp();
+    </script>
+</body>
+
+</html>
